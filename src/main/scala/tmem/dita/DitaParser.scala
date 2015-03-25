@@ -26,15 +26,20 @@ object DitaParser {
     val xml = new XMLEventReader(Source.fromFile(ditaXmlFile))
     var insideCodeblock = false
     var inlineCount = 0
-    var texts = mutable.MutableList[Sentence]()
     var pos = 0
-    val doc = Document(ditaXmlFile, texts)
+    val doc = new Document(ditaXmlFile, ditaXmlFile)
+    val sentences : mutable.ListBuffer[Sentence] = mutable.ListBuffer.empty[Sentence]
+//    var texts : collection.mutable.MutableList[Sentence] = doc.sentences
+//    var texts = mutable.MutableList[Sentence]()
+
     for(event <- xml){
       event match {
         case EvElemStart(_,"codeblock",_,_) => insideCodeblock = true
         case EvElemEnd(_,"codeblock") => insideCodeblock = false
         case EvElemStart(_,"codeph",_,_) => inlineCount = 2
         case EvElemEnd(_,"codeph") => inlineCount = 1
+        case EvElemStart(_,"filepath",_,_) => inlineCount = 2
+        case EvElemEnd(_,"filepath") => inlineCount = 1
         case EvText(text) =>
           if(!insideCodeblock) {
             var t = text.trim()
@@ -43,20 +48,27 @@ object DitaParser {
               if(inlineCount == 0){
                 val ts = t.split("\\. ")
                 for(ti <- ts){
-                  texts += new Sentence(pos, ti)
+                  val s = new Sentence(pos)
+                  s.txt += ("en" -> ti)
+                  sentences += s
                 }
               } else {
                 if(inlineCount == 2) t = " <codeph>" + t + "</codeph> "
-                texts.get(texts.size - 1).get.concat(t)
+                // sentences.get(sentences.size - 1).get.concat("en", t)
+                sentences.last.concat("en", t)
                 inlineCount -= 1;
 
                 if(inlineCount == 0){
                   // Split the concatenated string.
-                  t = texts.last.sentence
-                  texts = texts.dropRight(1)
+                  t = sentences.last.txt.get("en").get
+//                  texts = texts.dropRight(1)
+//                  sentences.dropRight(1)
+                  sentences.remove(sentences.size - 1)
                   val ts = t.split("\\. ")
                   for(ti <- ts){
-                    texts += new Sentence(pos, ti)
+                    val s = new Sentence(pos)
+                    s.txt += ("en" -> ti)
+                    sentences += s
                   }
                 }
               }
@@ -66,7 +78,8 @@ object DitaParser {
         case _ =>
       }
     }
-    for(t <- texts){
+    doc.sentences = sentences.toList
+    for(t <- doc.sentences){
       println(t)
 
 //      val tokens = Tokenizer.tokenize(t)
@@ -75,10 +88,9 @@ object DitaParser {
 //        println(token)
 //      }
     }
+    // println(doc)
     doc
   }
 
-
-  case class Document(docId: String, body: mutable.Iterable[Sentence], labels: Set[String] = Set.empty)
 
 }

@@ -1,13 +1,15 @@
 package tmem.dita
 
-import com.google.common.collect.ImmutableSet
 import org.apache.spark.SparkContext
+
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
+
 import scala.collection.mutable
 
 /**
  * Created by koji on 2/27/15.
  */
-object VectorizeTest {
+object DimSumTest {
   def main(args: Array[String]) = {
 
     // Create SparkContext
@@ -15,11 +17,16 @@ object VectorizeTest {
 
 
     // Generate test data.
-    var s1 = new Sentence(0, "foo bar baz")
-    var s2 = new Sentence(1, "foo bar baz")
-    var s3 = new Sentence(2, "foo bar baz")
-    var s4 = new Sentence(3, "foo bar baz")
-    var s5 = new Sentence(4, "foo bari baz")
+    var s1 = new Sentence(0)
+    s1.txt += ("en" -> "foo bar baz")
+    var s2 = new Sentence(1)
+    s1.txt += ("en" -> "foo bar baz")
+    var s3 = new Sentence(2)
+    s1.txt += ("en" -> "foo bar baz")
+    var s4 = new Sentence(3)
+    s1.txt += ("en" -> "foo bar baz")
+    var s5 = new Sentence(4)
+    s1.txt += ("en" -> "foo bari baz")
     var sentences = mutable.ArrayBuffer.empty[Sentence]
     sentences += s1
     sentences += s2
@@ -84,12 +91,38 @@ object VectorizeTest {
     // 2: baz
     // 3: foo
 
-    val si = new Sentence(10, "foo bari bar bar")
+    val si = new Sentence(10)
+    si.txt += ("en" -> "foo bari bar bar")
     val siTerms = Tokenizer.tokenize(si.txt("en"))
     val siTfIdfs = termDict.tfIdfs(siTerms, idfs)
 
     val siVector = termDict.vectorize(siTfIdfs)
     println(siVector)
+
+//    val vectors = Seq(vector, siVector)
+    val vectors = Seq(vector)
+
+    // put collections in Spark
+    val rows = sc.parallelize(vectors)
+
+    val mat = new RowMatrix(rows)
+    println("mat")
+    println(mat.numRows())
+    println(mat.numCols())
+
+
+    val simPerfect = mat.columnSimilarities()
+
+
+    // (4,[0,2,3],[0.41666666666666663,0.3333333333333333,0.3333333333333333])
+    // (4,[0,3],[0.8333333333333333,0.3333333333333333])
+
+    println("simPerfect")
+    println(simPerfect.numRows())
+    println(simPerfect.numCols())
+    for(entry <- simPerfect.entries){
+      println(entry)
+    }
 
 
   }

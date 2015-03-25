@@ -5,7 +5,6 @@ import java.io.StringReader
 import org.apache.lucene.analysis.en.EnglishAnalyzer
 import org.apache.lucene.util.Version
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute
-import tmem.dita.DitaParser.Document
 import scala.collection.mutable
 
 object Tokenizer {
@@ -16,7 +15,7 @@ object Tokenizer {
   def tokenizeAll(sentences : Iterable[Sentence]) : Iterable[TermDoc] = sentences map tokenize
   // def tokenizeAll(sentences : Iterable[Sentence]) : Iterable[String] = sentences flatMap tokenize
 
-  def tokenize(sentence: Sentence): TermDoc = TermDoc(String.valueOf(sentence.pos), tokenize(sentence.sentence))
+  def tokenize(sentence: Sentence): TermDoc = TermDoc(String.valueOf(sentence.pos), tokenize(sentence.txt("en")))
 
   def tokenize(content: String): Seq[String] = {
     val tReader = new StringReader(content)
