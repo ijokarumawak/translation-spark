@@ -29,7 +29,8 @@ object DocLoader extends App {
 
   // Parse document.
 //  val document = DitaParser.parse("/Users/koji/dev/Couchbase/projects/docs-ja/en/learn/admin/REST/rest-user-create.dita")
-  val document = DitaParser.parse("/Users/koji/dev/Couchbase/projects/docs-ja/en/learn/admin/Install/linux-startup-shutdown.dita")
+//  val document = DitaParser.parse("/Users/koji/dev/Couchbase/projects/docs-ja/en/learn/admin/Install/linux-startup-shutdown.dita")
+  val document = DitaParser.parse("/Users/koji/dev/Couchbase/projects/docs-ja/en/learn/admin/REST/rest-user-getname.dita")
 
 
   // Save as a brand new document.
