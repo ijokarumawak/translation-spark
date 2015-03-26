@@ -1,7 +1,7 @@
 package tmem.dita
 
 import com.couchbase.client.java.document.JsonDocument
-import com.couchbase.client.java.document.json.JsonObject
+import com.couchbase.client.java.document.json.{JsonArray, JsonObject}
 import com.couchbase.client.java.query.Query
 import com.couchbase.spark._
 import org.apache.spark.mllib.linalg.Vectors
@@ -32,9 +32,11 @@ object DictionaryCreator extends App {
   implicit val documentFmt = Json.format[Document]
 
   // Similarity less than this is discarded.
-  val simThreshold : Double = 0.7
+  val simThreshold : Double = 0.3
   // How many similar sentences to store.
-  val numOfSimEntries : Int = 3;
+  val numOfSimEntries : Int = 5;
+  // If a term doesn't appear at least in n documents, the term is discarded.
+  val minimumOccurrence : Int = 1;
 
   def toDocument(d: JsonDocument) : Document = {
     Json.fromJson[Document](Json.parse(d.content().toString)).get
@@ -88,8 +90,8 @@ object DictionaryCreator extends App {
   val numDocs = termDocsRdd.count()
   val idfs = (termDocsRdd.flatMap(termDoc => termDoc.terms.map((termDoc.doc, _))).distinct().groupBy(_._2) collect {
     // mapValues not implemented :-(
-    // if term is present in less than 2 documents then remove it
-    case (term, docs) if docs.size > 2 =>
+    // if term is present in less than n documents then remove it
+    case (term, docs) if docs.size > minimumOccurrence =>
       term -> (numDocs.toDouble / docs.size.toDouble)
   }).collect.toMap
 
@@ -139,8 +141,11 @@ object DictionaryCreator extends App {
 //    override def compare(a: (Long, Double), b: (Long, Double)) = a._2.compare(b._2)
 //  }
   // TODO: There must be better way to do this...
-  val topN = sims.entries.filter(m => m.value > simThreshold).map{
-    case entry => (entry.i, (entry.j, entry.value))
+  val topN = sims.entries.filter(m => m.value > simThreshold).flatMap{
+    // TODO: Need to emit src : target, and also target : src link.
+    case entry => Seq(
+      (entry.i, (entry.j, entry.value)),
+      (entry.j, (entry.i, entry.value)))
   }.groupByKey().map{case(srcSid, targets) => (srcSid, targets.toSeq.sortBy(_._2).takeRight(numOfSimEntries))}
   for(entry <- topN){
     println(entry)
@@ -152,7 +157,13 @@ object DictionaryCreator extends App {
       // Use sentence id so that it can be retrieved with KV access.
       val doc = JsonDocument.create("sim::" + entry._1, JsonObject.create())
       doc.content().put("_type", "sim")
-      entry._2.map{case (tid, sim) => doc.content().put(String.valueOf(tid), sim)}
+      val sims = JsonArray.create()
+      doc.content().put("sims", sims)
+      entry._2.map{case (tid, sim) =>
+        val s = JsonObject.create()
+        s.put("id", String.valueOf(tid))
+        s.put("sim", sim)
+        sims.add(s)}
       doc
   }.saveToCouchbase("translation")
 
