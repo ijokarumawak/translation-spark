@@ -2,6 +2,7 @@ package tmem.dita
 import java.util
 
 import scala.collection.mutable
+import scala.xml.MetaData
 import scala.xml.pull.{EvElemEnd, EvElemStart, EvText, XMLEventReader}
 import scala.io.Source
 
@@ -12,7 +13,7 @@ object DitaParser {
 
 //  def main(args: Array[String]) = parse("/Users/koji/dev/Couchbase/projects/docs-ja/en/learn/admin/REST/rest-user-getname.dita")
   def main(args: Array[String]) = {
-    val doc = parse("/Users/koji/dev/Couchbase/projects/docs-ja/en/learn/admin/REST/rest-user-create.dita")
+    val doc = parse("/Users/koji/dev/Couchbase/projects/docs-ja/en/learn/admin/XDCR/xdcr-pause-resume.dita")
 //    val termDoc = Tokenizer.tokenize(doc)
 //    for(token <- termDoc.terms){
 //      println(token)
@@ -32,14 +33,27 @@ object DitaParser {
 //    var texts : collection.mutable.MutableList[Sentence] = doc.sentences
 //    var texts = mutable.MutableList[Sentence]()
 
+    var inlineTagName : String = ""
+    var inlineTagAttrs : MetaData = null
     for(event <- xml){
       event match {
         case EvElemStart(_,"codeblock",_,_) => insideCodeblock = true
         case EvElemEnd(_,"codeblock") => insideCodeblock = false
-        case EvElemStart(_,"codeph",_,_) => inlineCount = 2
+        // TODO: there must be a way to capture tag names and handle case block in better way.
+        case EvElemStart(_,"codeph",_,_) => {
+          inlineCount = 2
+          inlineTagName = "codeph"}
         case EvElemEnd(_,"codeph") => inlineCount = 1
-        case EvElemStart(_,"filepath",_,_) => inlineCount = 2
+        case EvElemStart(_,"filepath",_,_) => {
+          inlineCount = 2
+          inlineTagName = "filepath"}
         case EvElemEnd(_,"filepath") => inlineCount = 1
+        case EvElemStart(_,"xref",attrs,_) => {
+          inlineCount = 2
+          inlineTagName = "xref"
+          inlineTagAttrs = attrs
+        }
+        case EvElemEnd(_,"xref") => inlineCount = 1
         case EvText(text) =>
           if(!insideCodeblock) {
             var t = text.trim()
@@ -53,7 +67,13 @@ object DitaParser {
                   sentences += s
                 }
               } else {
-                if(inlineCount == 2) t = " <codeph>" + t + "</codeph> "
+                if(inlineCount == 2) {
+                  var tagOpen = " <" + inlineTagName
+                  if(inlineTagAttrs != null) {
+                    tagOpen = tagOpen + inlineTagAttrs
+                  }
+                  t = tagOpen + ">" + t + "</" + inlineTagName + "> "
+                }
                 // sentences.get(sentences.size - 1).get.concat("en", t)
                 sentences.last.concat("en", t)
                 inlineCount -= 1;
