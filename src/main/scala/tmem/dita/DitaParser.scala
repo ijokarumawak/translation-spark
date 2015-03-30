@@ -1,7 +1,9 @@
 package tmem.dita
 import java.util
 
+import scala.StringBuilder
 import scala.collection.mutable
+import scala.collection.mutable.ListBuffer
 import scala.xml.MetaData
 import scala.xml.pull.{EvElemEnd, EvElemStart, EvText, XMLEventReader}
 import scala.io.Source
@@ -11,87 +13,117 @@ import scala.io.Source
  */
 object DitaParser {
 
-//  def main(args: Array[String]) = parse("/Users/koji/dev/Couchbase/projects/docs-ja/en/learn/admin/REST/rest-user-getname.dita")
   def main(args: Array[String]) = {
-    val doc = parse("/Users/koji/dev/Couchbase/projects/docs-ja/en/learn/admin/XDCR/xdcr-pause-resume.dita")
-//    val termDoc = Tokenizer.tokenize(doc)
-//    for(token <- termDoc.terms){
-//      println(token)
-//    }
+    val doc = parse("/Users/koji/dev/Couchbase/projects/docs-ja/ja/learn/admin/Install/hostnames.dita")
   }
 
   def parseAll(xmlFiles: Iterable[String]) = xmlFiles map parse
 
+  def breakSentences(text : String) : Seq[String] = {
+    val ts = text.split("\\. ")
+    val texts = ListBuffer[String]()
+    for((ti, i) <- ts.zipWithIndex){
+      // Re-add the period.
+      if(i != ts.size - 1) {
+        texts += (ti + ".")
+      } else {
+        texts += ti
+      }
+    }
+    texts
+  }
+
+  def addSentences(text : String, pos : Int, container : mutable.ListBuffer[Sentence]) : Unit = {
+    breakSentences(text).foreach{t =>
+      val s = new Sentence(pos)
+      s.txt += ("en" -> t)
+      container += s
+    }
+  }
+
+  def addSpaceAndText(inlineBuff : StringBuilder, text : String) : Unit = {
+    // Adding space if it doesn't have.
+    if(!inlineBuff.endsWith(" ")) inlineBuff ++= " "
+    inlineBuff ++= text
+  }
+
   def parse(ditaXmlFile: String) : Document = {
     println("Parsing " + ditaXmlFile)
     val xml = new XMLEventReader(Source.fromFile(ditaXmlFile))
-    var insideCodeblock = false
-    var inlineCount = 0
     var pos = 0
     val doc = new Document(ditaXmlFile, ditaXmlFile)
     val sentences : mutable.ListBuffer[Sentence] = mutable.ListBuffer.empty[Sentence]
-//    var texts : collection.mutable.MutableList[Sentence] = doc.sentences
-//    var texts = mutable.MutableList[Sentence]()
 
-    var inlineTagName : String = ""
-    var inlineTagAttrs : MetaData = null
+
+    var ignoring = false
+    val inlineTags = """^(uicontrol|wintitle|xref|filepath|codeph|menucascade)$""".r
+    val ignoreTags = """^(codeblock)$""".r
+    val inlineStack = mutable.Stack[EvElemStart]()
+    val inlineBuff = new StringBuilder()
+    var previousWasInline = false;
     for(event <- xml){
       event match {
-        case EvElemStart(_,"codeblock",_,_) => insideCodeblock = true
-        case EvElemEnd(_,"codeblock") => insideCodeblock = false
-        // TODO: there must be a way to capture tag names and handle case block in better way.
-        case EvElemStart(_,"codeph",_,_) => {
-          inlineCount = 2
-          inlineTagName = "codeph"}
-        case EvElemEnd(_,"codeph") => inlineCount = 1
-        case EvElemStart(_,"filepath",_,_) => {
-          inlineCount = 2
-          inlineTagName = "filepath"}
-        case EvElemEnd(_,"filepath") => inlineCount = 1
-        case EvElemStart(_,"xref",attrs,_) => {
-          inlineCount = 2
-          inlineTagName = "xref"
-          inlineTagAttrs = attrs
+        case EvElemStart(_,ignoreTags(tagName),_,_) => ignoring = true
+        case EvElemEnd(_,ignoreTags(tagName)) => ignoring = false
+        case EvElemStart(pre, inlineTags(tagName), attrs, scope) => {
+
+          if(inlineStack.isEmpty) {
+            // This is the starting element, initiate buffer.
+            inlineBuff.clear()
+          }
+          addSpaceAndText(inlineBuff, s"<$tagName$attrs>")
+          inlineStack.push(event.asInstanceOf[EvElemStart])
         }
-        case EvElemEnd(_,"xref") => inlineCount = 1
+        case EvElemEnd(_,inlineTags(tagName)) => {
+
+          val elm = inlineStack.pop()
+          // If none of text is appended as CDATA, then close the starting tag with "/>".
+          val emptyTag = ("^.*(<" + tagName + "[^<>]*)>$").r
+          inlineBuff.toString() match {
+            case emptyTag(tagStart) =>
+              inlineBuff.insert(inlineBuff.length - 1, "/")
+            case _ => inlineBuff ++= s"</$tagName>"
+          }
+
+          if(inlineStack.isEmpty){
+            // Flush the buffer by appending it to the last sentence.
+            sentences.last.concat("en", inlineBuff.toString())
+            previousWasInline = true;
+          }
+        }
+        case EvElemStart(_,_,_,_) => {
+          // Clear concatenating texts.
+          previousWasInline = false;
+        }
         case EvText(text) =>
-          if(!insideCodeblock) {
+          if(!ignoring) {
             var t = text.trim()
             if(t.nonEmpty){
               t = t.replaceAll("\\s+", " ")
-              if(inlineCount == 0){
-                val ts = t.split("\\. ")
-                for(ti <- ts){
-                  val s = new Sentence(pos)
-                  s.txt += ("en" -> ti)
-                  sentences += s
-                }
-              } else {
-                if(inlineCount == 2) {
-                  var tagOpen = " <" + inlineTagName
-                  if(inlineTagAttrs != null) {
-                    tagOpen = tagOpen + inlineTagAttrs
-                  }
-                  t = tagOpen + ">" + t + "</" + inlineTagName + "> "
-                }
-                // sentences.get(sentences.size - 1).get.concat("en", t)
-                sentences.last.concat("en", t)
-                inlineCount -= 1;
 
-                if(inlineCount == 0){
-                  // Split the concatenated string.
-                  t = sentences.last.txt.get("en").get
-//                  texts = texts.dropRight(1)
-//                  sentences.dropRight(1)
-                  sentences.remove(sentences.size - 1)
-                  val ts = t.split("\\. ")
-                  for(ti <- ts){
-                    val s = new Sentence(pos)
-                    s.txt += ("en" -> ti)
-                    sentences += s
+              if(inlineStack.isEmpty){
+                if(previousWasInline) {
+                  // A heuristic rule to join the period right after the closing inline tag.
+                  // ex) <p>foo said that to <xref href="xxx">bar</xref> yesterday.</p>
+                  val buff = new StringBuilder()
+                  sentences.last.txt.get("en") match {
+                    case Some(txt) => buff ++= txt
                   }
+                  addSpaceAndText(buff, t)
+                  t = buff.toString()
+
+                  sentences.remove(sentences.size - 1)
+                  previousWasInline = false;
                 }
+
+                // Split the string, and flush sentences.
+                addSentences(t, pos, sentences)
+
+              } else {
+                // Buffer text.
+                inlineBuff ++= t
               }
+
               pos += 1
             }
           }
@@ -100,15 +132,9 @@ object DitaParser {
     }
     doc.sentences = sentences.toList
     for(t <- doc.sentences){
-      println(t)
-
-//      val tokens = Tokenizer.tokenize(t)
-//      t.tokens = tokens
-//      for(token <- tokens){
-//        println(token)
-//      }
+      println(t.txt.get("en").get)
     }
-    // println(doc)
+
     doc
   }
 
