@@ -13,13 +13,16 @@ import tmem.dita.Tokenizer
 import org.apache.spark.SparkContext._
 
 /**
+ * Inspired by:
+ * - http://databricks.gitbooks.io/databricks-spark-knowledge-base/content/best_practices/prefer_reducebykey_over_groupbykey.html
+ * - https://chimpler.wordpress.com/2014/06/11/classifiying-documents-using-naive-bayes-on-apache-spark-mllib/
  * Created by koji on 3/19/15.
  */
-object DictionaryCreator extends App {
+object CalculateSimilarSentences extends App {
 
   val conf = new SparkConf().setMaster("local[*]").setAppName("dictionary-creator")
 
-  //
+  // Couchbase Server connection settings.
   conf.set("com.couchbase.nodes", "vm.sherlock")
   conf.set("com.couchbase.bucket.spark", "")
   conf.set("com.couchbase.bucket.translation", "")
@@ -31,12 +34,12 @@ object DictionaryCreator extends App {
   implicit val sentenceFmt = Json.format[Sentence]
   implicit val documentFmt = Json.format[Document]
 
+  // If a term doesn't appear at least in n documents, the term is discarded.
+  val minimumOccurrence : Int = 1;
   // Similarity less than this is discarded.
   val simThreshold : Double = 0.3
   // How many similar sentences to store.
   val numOfSimEntries : Int = 5;
-  // If a term doesn't appear at least in n documents, the term is discarded.
-  val minimumOccurrence : Int = 1;
 
   def toDocument(d: JsonDocument) : Document = {
     Json.fromJson[Document](Json.parse(d.content().toString)).get
@@ -52,14 +55,7 @@ object DictionaryCreator extends App {
     .flatMap(
       // Transform each Document
       d => toDocument(d)
-        // Break down into each Sentence with index in the array
-        /*
-        .sentences.zipWithIndex.map{
-          // Tokenize each sentence
-          case(s, i) => (d.id() + "-" + i, Tokenizer.tokenize(s.txt("en")))
-        }
-        */
-        // Use global Id index instead of array index.
+        // Break down into each Sentence with global sentence id.
         .sentences.map{
            s =>
              new TermDoc(String.valueOf(s.id), Tokenizer.tokenize(s.txt("en")))
@@ -102,27 +98,33 @@ object DictionaryCreator extends App {
   }
 
   // Calculate each sentence's TFIDF
-  val tfidfsRdd = termDocsRdd.map{termDoc => (termDoc.doc, termDict.tfIdfs(termDoc.terms.toSeq, idfs))}.persist()
+  val tfidfsRdd = termDocsRdd.map{termDoc => (termDoc.doc, termDict.tfIdfs(termDoc.terms.toSeq, idfs))}
+    .persist()
   println("tfidfs", tfidfsRdd)
   tfidfsRdd.foreach{case (s, tfidf) => println(s, tfidf)}
 
+  // This is used as a vector size, so it should be + 1, otherwise ArrayIndexOutOfBoundsException.
+  val vectorSize = termDocsRdd.map(t => t.doc.toInt).max() + 1
+  println(s"vectorSize=$vectorSize")
+
   // Convert it to Vectors
-  // http://databricks.gitbooks.io/databricks-spark-knowledge-base/content/best_practices/prefer_reducebykey_over_groupbykey.html
-  val dictSize = dictTerms.size()
   val sentenceTfIdfsByTermIdRdd = tfidfsRdd.flatMap{
-    case (s, tfidfs) => tfidfs.map{
-      case (termId, tfidf) => (termId, (Integer.parseInt(s), tfidf))
+    case (sentenceId, tfidfs) => tfidfs.map{
+      case (termId, tfidf) => (termId, (Integer.parseInt(sentenceId), tfidf))
     }
   }.groupByKey().map{
     case(termId, sentences) =>
       // Sort the sentence by sid, because Vectors.sparse requires that.
-      // However, the order ov each Vector is not important,
+      // However, the order of each Vector is not important,
       // because the RowMatrix only calculate column similarity.
       val sortedSentences = sentences.toArray.sortBy(_._1)
       val sids = sortedSentences.map(_._1)
       val tfidfs = sortedSentences.map(_._2)
-      Vectors.sparse(dictSize, sids, tfidfs)
+      Vectors.sparse(vectorSize, sids, tfidfs)
   }.persist()
+
+
+
   println("sentenceTfIdfsByTermIdRdd", sentenceTfIdfsByTermIdRdd)
   sentenceTfIdfsByTermIdRdd.foreach{entry => println(entry)}
 
@@ -134,12 +136,6 @@ object DictionaryCreator extends App {
   }
 
   // Select top N similar sentences
-//  implicit val sortBySim = new Ordering[MatrixEntry] {
-//    override def compare(a: MatrixEntry, b: MatrixEntry) = a.value.compare(b.value)
-//  }
-//  implicit val sortBySim = new Ordering[(Long, Double)] {
-//    override def compare(a: (Long, Double), b: (Long, Double)) = a._2.compare(b._2)
-//  }
   // TODO: There must be better way to do this...
   val topN = sims.entries.filter(m => m.value > simThreshold).flatMap{
     // TODO: Need to emit src : target, and also target : src link.
